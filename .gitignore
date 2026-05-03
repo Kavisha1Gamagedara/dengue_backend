@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.venv/
+env/
+venv/
+instance/
+.pytest_cache/
+
+# Credentials (Critical)
+firebase-service-account.json
+*.json
+
+# Data/Models (Keep if needed for Render, but watch size)
+# dengue_model.pkl is ~99MB - close to GitHub's limit
+# .csv
+
+# Logs
+*.log
