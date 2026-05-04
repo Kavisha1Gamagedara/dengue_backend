@@ -22,8 +22,17 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 bcrypt = Bcrypt(app)
 
 # --- Configuration ---
-env_path = Path(__file__).resolve().parent.parent / ".env"
-load_dotenv(env_path)
+local_env = Path(__file__).resolve().parent / ".env"
+parent_env = Path(__file__).resolve().parent.parent / ".env"
+
+if local_env.exists():
+    load_dotenv(local_env)
+    print("Loaded .env from current directory")
+elif parent_env.exists():
+    load_dotenv(parent_env)
+    print("Loaded .env from parent directory")
+else:
+    print("No .env file found. Using environment variables from system.")
 
 MONGODB_URI = os.getenv("MONGODB_URI")
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "super-secret-key-dengue-2024")
@@ -62,18 +71,18 @@ def get_db_connection():
         db_name = MONGODB_URI.split("/")[-1].split("?")[0] or "Dengue_prediction_db"
         database = client.get_database(db_name)
         
-        print(f"✅ Connected to MongoDB Atlas: {db_name}")
+        print(f"Connected to MongoDB Atlas: {db_name}")
         return client, database
     except Exception as e:
         error_msg = str(e)
         if "TLSV1_ALERT_INTERNAL_ERROR" in error_msg:
-            print("\n❌ CRITICAL: SSL Handshake Failed with 'TLSV1_INTERNAL_ERROR'.")
-            print("👉 This usually indicates your IP is NOT whitelisted in MongoDB Atlas.")
+            print("\nCRITICAL: SSL Handshake Failed with 'TLSV1_INTERNAL_ERROR'.")
+            print("This usually indicates your IP is NOT whitelisted in MongoDB Atlas.")
             print("Action: Go to Atlas -> Network Access -> Add IP Address -> 'Allow Access from Anywhere' (or add your current IP).\n")
         elif "ServerSelectionTimeoutError" in error_msg:
-            print(f"\n❌ CRITICAL: Could not connect to any MongoDB nodes. Timeout: {e}\n")
+            print(f"\nCRITICAL: Could not connect to any MongoDB nodes. Timeout: {e}\n")
         else:
-            print(f"\n❌ MongoDB Connection Error: {e}\n")
+            print(f"\nMongoDB Connection Error: {e}\n")
         raise RuntimeError(f"Database connection failed. Please check your network and Atlas Whitelist.")
 
 # Initialize DB
@@ -87,9 +96,9 @@ try:
         "event": "backend_started",
         "timestamp": datetime.now(timezone.utc)
     })
-    print("🚀 Database primed with startup event")
+    print("Database primed with startup event")
 except Exception as e:
-    print(f"⚠️  Warning: Failed to prime database: {e}")
+    print(f"Warning: Failed to prime database: {e}")
 
 # --- Load Models ---
 try:
@@ -112,9 +121,9 @@ FIREBASE_CRED_PATH = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH")
 if FIREBASE_CRED_PATH and os.path.exists(FIREBASE_CRED_PATH):
     cred = credentials.Certificate(FIREBASE_CRED_PATH)
     firebase_admin.initialize_app(cred)
-    print("🔥 Firebase initialized successfully")
+    print("Firebase initialized successfully")
 else:
-    print("⚠️  Firebase credentials not found. FCM will be disabled.")
+    print("Firebase credentials not found. FCM will be disabled.")
 
 # --- Helpers ---
 def serialize_doc(doc):
@@ -122,17 +131,29 @@ def serialize_doc(doc):
         doc["_id"] = str(doc["_id"])
     return doc
 
-@app.route('/ping', methods=['GET'])
+@app.route('/', methods=['GET', 'HEAD'])
+def index():
+    return jsonify({
+        'status': 'online',
+        'message': 'Dengue Shield Backend is running!',
+        'timestamp': datetime.now(timezone.utc).isoformat()
+    }), 200
+
+@app.route('/ping', methods=['GET', 'HEAD'])
+@app.route('/ping/', methods=['GET', 'HEAD'])
 def ping():
     return jsonify({'message': 'Backend is reachable!'}), 200
 
 # --- Authentication Routes ---
 
 @app.route('/register', methods=['POST'])
+@app.route('/register/', methods=['POST'])
 def register():
-    print(f"Received registration request: {request.remote_addr}")
+    print(f"Received registration request: {request.remote_addr} for {request.path}")
     try:
         data = request.get_json()
+        if not data:
+            return jsonify({'message': 'Missing JSON body'}), 400
         name = data.get('name')
         email = data.get('email')
         password = data.get('password')
@@ -167,10 +188,13 @@ def register():
         return jsonify({'message': 'Internal server error during registration'}), 500
 
 @app.route('/login', methods=['POST'])
+@app.route('/login/', methods=['POST'])
 def login():
-    print(f"Received login request: {request.remote_addr}")
+    print(f"Received login request: {request.remote_addr} for {request.path}")
     try:
         data = request.get_json()
+        if not data:
+            return jsonify({'message': 'Missing JSON body'}), 400
         email = data.get('email')
         password = data.get('password')
 
@@ -326,8 +350,16 @@ def predict_risk():
         }])
         
         # Statsmodels SARIMAX forecast for the next step using the provided weather data
-        forecast = model.get_forecast(steps=1, exog=input_df)
-        predicted_cases = max(0.0, round(float(forecast.predicted_mean.iloc[0]), 2))
+        if hasattr(model, 'get_forecast'):
+            forecast = model.get_forecast(steps=1, exog=input_df)
+            predicted_cases = max(0.0, round(float(forecast.predicted_mean.iloc[0]), 2))
+        elif hasattr(model, 'predict'):
+            # Fallback for standard scikit-learn model
+            pred = model.predict(input_df)
+            predicted_cases = max(0.0, round(float(pred[0]), 2))
+        else:
+            return jsonify({'status': 'error', 'message': 'Model format unknown'}), 500
+
         risk_level = 'High' if predicted_cases > 100 else 'Low'
 
         log_entry = {
@@ -387,9 +419,11 @@ def predict_sarimax():
 @app.route('/heatmap', methods=['GET'])
 def get_heatmap_data():
     try:
-        # In a real app, you'd aggregate recent logs or use a separate collection
-        # Here we mock it from the CSV for demonstration
-        df = pd.read_csv('../dengue_data_with_weather_data.csv')
+        csv_path = 'dengue_data_with_weather_data.csv'
+        if not os.path.exists(csv_path):
+            csv_path = '../dengue_data_with_weather_data.csv'
+
+        df = pd.read_csv(csv_path)
         # Get the latest month data
         latest_data = df[df['Year'] == df['Year'].max()]
         latest_data = latest_data[latest_data['Month'] == latest_data['Month'].max()]
@@ -418,7 +452,11 @@ def get_heatmap_data():
 @app.route('/stats', methods=['GET'])
 def get_stats():
     try:
-        df = pd.read_csv('../dengue_data_with_weather_data.csv')
+        csv_path = 'dengue_data_with_weather_data.csv'
+        if not os.path.exists(csv_path):
+            csv_path = '../dengue_data_with_weather_data.csv'
+
+        df = pd.read_csv(csv_path)
         # Get the latest month data
         latest_year = df['Year'].max()
         latest_month_data = df[df['Year'] == latest_year]
@@ -496,5 +534,7 @@ def get_history():
         return jsonify({'message': str(e)}), 500
 
 if __name__ == '__main__':
-    # Using a different port if needed, but 5000 is default
-    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
+    # Render provides the port in the PORT environment variable
+    port = int(os.environ.get("PORT", 5000))
+    print(f"Backend starting on port {port}")
+    app.run(host='0.0.0.0', port=port, debug=True, use_reloader=False)
