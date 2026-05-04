@@ -151,7 +151,19 @@ def index():
 
 @app.route('/ping', methods=['GET', 'POST', 'HEAD', 'OPTIONS'])
 def ping():
-    return jsonify({'message': 'Backend is reachable!', 'build': '6:40 AM'}), 200
+    db_status = "OFFLINE"
+    try:
+        # Ping the database to check status
+        client.admin.command('ping')
+        db_status = "CONNECTED"
+    except Exception as e:
+        print(f"Health check failed: {e}")
+        
+    return jsonify({
+        'message': 'Backend is reachable!', 
+        'database': db_status,
+        'build': '7:00 AM'
+    }), 200
 
 # --- Authentication Routes ---
 
