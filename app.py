@@ -17,8 +17,12 @@ from google.oauth2 import id_token
 from google.auth.transport import requests
 
 app = Flask(__name__)
-# Enable CORS for the frontend (assumed to be running on another port)
-CORS(app, resources={r"/*": {"origins": "*"}})
+# Absolute permissive CORS for production
+CORS(app, resources={r"/*": {
+    "origins": "*",
+    "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"],
+    "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "Accept"]
+}})
 bcrypt = Bcrypt(app)
 
 # --- Configuration ---
@@ -131,18 +135,23 @@ def serialize_doc(doc):
         doc["_id"] = str(doc["_id"])
     return doc
 
-@app.route('/', methods=['GET', 'HEAD'])
+@app.before_request
+def log_request_info():
+    if request.method != 'OPTIONS':
+        print(f"📡 {request.method} {request.path} from {request.remote_addr}")
+
+@app.route('/', methods=['GET', 'POST', 'HEAD', 'OPTIONS'])
 def index():
     return jsonify({
         'status': 'online',
         'message': 'Dengue Shield Backend is running!',
-        'timestamp': datetime.now(timezone.utc).isoformat()
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'build': '6:40 AM'
     }), 200
 
-@app.route('/ping', methods=['GET', 'HEAD'])
-@app.route('/ping/', methods=['GET', 'HEAD'])
+@app.route('/ping', methods=['GET', 'POST', 'HEAD', 'OPTIONS'])
 def ping():
-    return jsonify({'message': 'Backend is reachable!'}), 200
+    return jsonify({'message': 'Backend is reachable!', 'build': '6:40 AM'}), 200
 
 # --- Authentication Routes ---
 

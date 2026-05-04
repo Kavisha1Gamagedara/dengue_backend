@@ -4,7 +4,7 @@ FROM python:3.12-slim
 # Set the working directory in the container
 WORKDIR /app
 
-# Install system dependencies (build-essential needed for some python packages like pandas/numpy)
+# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
@@ -18,8 +18,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the backend files into the container at /app
 COPY . .
 
-# Make port 5000 available to the world outside this container
-EXPOSE 5000
+# Make port 10000 available to the world outside this container
+EXPOSE 10000
 
-# Run app.py when the container launches
-CMD ["python", "app.py"]
+# Run gunicorn when the container launches
+# Binding to 0.0.0.0:10000 which is standard for Render
+CMD ["gunicorn", "--bind", "0.0.0.0:10000", "app:app", "--timeout", "90"]
