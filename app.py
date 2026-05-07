@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from flask_bcrypt import Bcrypt
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
@@ -15,6 +15,7 @@ from firebase_admin import credentials, messaging
 from statsmodels.tsa.statespace.sarimax import SARIMAXResults
 from google.oauth2 import id_token
 from google.auth.transport import requests
+import uuid
 
 app = Flask(__name__)
 # Absolute permissive CORS for production
@@ -93,6 +94,7 @@ def get_db_connection():
 client, db = get_db_connection()
 prediction_logs = db.prediction_logs
 users_collection = db.users
+patients_collection = db.patients
 
 # Prime the database with a startup event
 try:
@@ -164,6 +166,18 @@ def ping():
         'database': db_status,
         'build': '7:00 AM'
     }), 200
+
+@app.errorhandler(404)
+def not_found(e):
+    return jsonify({"message": "Endpoint not found", "error": str(e)}), 404
+
+@app.errorhandler(405)
+def method_not_allowed(e):
+    return jsonify({"message": "Method not allowed", "error": str(e)}), 405
+
+@app.errorhandler(500)
+def server_error(e):
+    return jsonify({"message": "Internal server error", "error": str(e)}), 500
 
 # --- Authentication Routes ---
 
@@ -551,6 +565,76 @@ def get_history():
                 log['timestamp'] = log['timestamp'].isoformat()
         
         return jsonify(logs), 200
+    except Exception as e:
+        return jsonify({'message': str(e)}), 500
+
+@app.route('/report_case', methods=['POST'])
+@app.route('/report_case/', methods=['POST'])
+@jwt_required()
+def report_case():
+    try:
+        user_id = get_jwt_identity()
+        
+        # Get data from form fields
+        name = request.form.get('name')
+        age = request.form.get('age')
+        gender = request.form.get('gender')
+        district = request.form.get('district')
+        symptoms = request.form.get('symptoms')
+        contact = request.form.get('contact')
+        
+        # Handle Image
+        image_base64 = None
+        if 'image' in request.files:
+            file = request.files['image']
+            if file.filename != '':
+                import base64
+                # Read the image data
+                image_data = file.read()
+                # Determine content type (default to jpeg if unknown)
+                content_type = file.content_type or 'image/jpeg'
+                # Convert to base64 string with data URI prefix
+                encoded_string = base64.b64encode(image_data).decode('utf-8')
+                image_base64 = f"data:{content_type};base64,{encoded_string}"
+        
+        patient_doc = {
+            'user_id': user_id,
+            'name': name,
+            'age': age,
+            'gender': gender,
+            'district': district,
+            'symptoms': symptoms,
+            'contact': contact,
+            'image_base64': image_base64,
+            'status': 'reported',
+            'created_at': datetime.now(timezone.utc)
+        }
+        
+        result = patients_collection.insert_one(patient_doc)
+        
+        return jsonify({
+            'message': 'Case reported successfully',
+            'case_id': str(result.inserted_id)
+        }), 201
+    except Exception as e:
+        print(f"Report case error: {e}")
+        return jsonify({'message': str(e)}), 500
+
+@app.route('/uploads/<filename>')
+def uploaded_file(filename):
+    return send_from_directory(os.path.join(os.getcwd(), 'uploads'), filename)
+
+@app.route('/my_reports', methods=['GET'])
+@jwt_required()
+def get_my_reports():
+    try:
+        user_id = get_jwt_identity()
+        reports = list(patients_collection.find({'user_id': user_id}).sort('created_at', -1))
+        for report in reports:
+            report['_id'] = str(report['_id'])
+            if 'created_at' in report and isinstance(report['created_at'], datetime):
+                report['created_at'] = report['created_at'].isoformat()
+        return jsonify(reports), 200
     except Exception as e:
         return jsonify({'message': str(e)}), 500
 
