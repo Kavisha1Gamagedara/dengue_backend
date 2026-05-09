@@ -497,30 +497,67 @@ def get_stats():
         latest_month_data = df[df['Year'] == latest_year]
         latest_month = latest_month_data['Month'].max()
         latest_data = latest_month_data[latest_month_data['Month'] == latest_month]
+        district_query = request.args.get('district')
         
-        total_cases = int(latest_data['Cases'].sum())
-        # Mocking active cases as a fraction of total cases for the month
+        target_cases = int(latest_data['Cases'].sum())
+        
+        if district_query:
+            # Map common alternate spellings
+            spellings = {
+                "mathale": "Matale",
+                "monaragala": "Moneragala",
+                "mullaitivu": "Mulativu",
+                "trincomali": "Trincomalee"
+            }
+            clean_query = district_query.lower()
+            if clean_query in spellings:
+                district_query = spellings[clean_query]
+                
+            # Try to find exact or partial match for the district
+            import re
+            pattern = re.compile(district_query, re.IGNORECASE)
+            district_data = latest_data[latest_data['District'].str.contains(pattern, na=False)]
+            if not district_data.empty:
+                target_cases = int(district_data['Cases'].iloc[0])
+
+        # Mocking active cases as a fraction of target cases
         # In a real scenario, this would come from a database of current cases
-        active_cases = int(total_cases * 0.15) 
-        recovered_cases = total_cases - active_cases
+        active_cases = int(target_cases * 0.15) 
+        recovered_cases = target_cases - active_cases
         
-        # Risk area is the district with maximum cases
+        # Risk area is always the district with maximum cases globally
         risk_area_row = latest_data.loc[latest_data['Cases'].idxmax()]
         risk_area = risk_area_row['District']
         
-        # Determine overall risk level
-        if active_cases > 1000:
-            risk_level = "High"
-            risk_desc = "Significant increase in cases detected. Please take immediate precautions."
-        elif active_cases > 300:
-            risk_level = "Moderate"
-            risk_desc = "Cases are present in your area. Maintain standard prevention measures."
+        if district_query and not district_data.empty:
+            # Determine local risk level based on weight relative to the highest district
+            import numpy as np
+            max_cases_log = np.log1p(latest_data['Cases'].max())
+            weight = np.log1p(target_cases) / max_cases_log
+            
+            if weight > 0.7:
+                risk_level = "High"
+                risk_desc = f"Significant risk detected in {district_query}. Please take immediate precautions."
+            elif weight > 0.3:
+                risk_level = "Moderate"
+                risk_desc = f"Cases are present in {district_query}. Maintain standard prevention measures."
+            else:
+                risk_level = "Low"
+                risk_desc = f"Case counts in {district_query} are currently low. Stay vigilant."
         else:
-            risk_level = "Low"
-            risk_desc = "Case counts are currently low. Stay vigilant and keep environment clean."
+            # Determine overall global risk level
+            if active_cases > 1000:
+                risk_level = "High"
+                risk_desc = "Significant increase in cases detected globally. Please take immediate precautions."
+            elif active_cases > 300:
+                risk_level = "Moderate"
+                risk_desc = "Cases are present across regions. Maintain standard prevention measures."
+            else:
+                risk_level = "Low"
+                risk_desc = "Global case counts are currently low. Stay vigilant and keep environment clean."
 
         return jsonify({
-            'total_cases': total_cases,
+            'total_cases': target_cases,
             'active_cases': active_cases,
             'recovered': recovered_cases,
             'risk_area': risk_area,
