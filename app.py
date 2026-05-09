@@ -148,7 +148,7 @@ def index():
         'status': 'online',
         'message': 'Dengue Shield Backend is running!',
         'timestamp': datetime.now(timezone.utc).isoformat(),
-        'build': '6:40 AM'
+        'build': '6:15 PM'
     }), 200
 
 @app.route('/ping', methods=['GET', 'POST', 'HEAD', 'OPTIONS'])
@@ -164,7 +164,7 @@ def ping():
     return jsonify({
         'message': 'Backend is reachable!', 
         'database': db_status,
-        'build': '7:00 AM'
+        'build': '6:15 PM'
     }), 200
 
 @app.errorhandler(404)
